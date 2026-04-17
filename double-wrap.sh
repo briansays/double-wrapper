@@ -12,8 +12,10 @@
 #
 set -euo pipefail
 
-# ── Logging ──────────────────────────────────────────────────────────────────
+# Logging setup 
+
 LOG_FILE=""
+
 log() {
     local level="$1"; shift
     local ts
@@ -22,11 +24,12 @@ log() {
     echo "$msg" >&2
     [[ -n "$LOG_FILE" ]] && echo "$msg" >> "$LOG_FILE"
 }
+
 debug() { log "DEBUG" "$@"; }
 info()  { log "INFO " "$@"; }
 error() { log "ERROR" "$@"; }
 
-# ── Password generation ─────────────────────────────────────────────────────
+# Password generation 
 # Generates a memorable passphrase-style password (14-20 chars) that includes
 # lowercase, uppercase, digits, and symbols.
 #
@@ -34,6 +37,7 @@ error() { log "ERROR" "$@"; }
 # group and a symbol to glue them together.  Result looks like:
 #   oak7#Breeze!cup   (17 chars)
 #   Mint3&river$fox   (15 chars)
+
 generate_password() {
     # Small curated word list — short, common, easy to remember
     local words=(
@@ -122,7 +126,8 @@ generate_password() {
     done
 }
 
-# ── Validation ───────────────────────────────────────────────────────────────
+# Validation 
+
 if [[ $# -lt 1 ]]; then
     echo "Usage: $0 <target-directory> [output-directory]" >&2
     exit 1
@@ -158,7 +163,7 @@ if ! command -v zip &>/dev/null; then
     exit 1
 fi
 
-# ── File/folder structure listing ────────────────────────────────────────────
+# File/folder structure listing
 info "Recording file/folder structure of target directory..."
 debug "--- BEGIN STRUCTURE ---"
 # Use find for the structure listing (written to log only via the log function)
@@ -181,14 +186,16 @@ debug "Total files       : $FILE_COUNT"
 debug "Total directories : $DIR_COUNT"
 debug "Total size (bytes): $TOTAL_SIZE"
 
-# ── Generate passwords ───────────────────────────────────────────────────────
+# Generate passwords 
+
 info "Generating passwords..."
 INNER_PASS="$(generate_password)"
 OUTER_PASS="$(generate_password)"
 debug "Inner password generated (${#INNER_PASS} chars)"
 debug "Outer password generated (${#OUTER_PASS} chars)"
 
-# ── Temp workspace ───────────────────────────────────────────────────────────
+# Temp workspace
+
 WORK_DIR="$(mktemp -d)"
 debug "Temp workspace    : $WORK_DIR"
 cleanup() {
@@ -198,7 +205,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# ── Inner zip ────────────────────────────────────────────────────────────────
+# Inner zip
+
 INNER_ZIP="$WORK_DIR/inner.zip"
 DIRNAME="$(basename "$TARGET_DIR")"
 
@@ -214,7 +222,8 @@ INNER_SIZE=$(stat -f'%z' "$INNER_ZIP" 2>/dev/null || stat --printf='%s' "$INNER_
 debug "Inner zip size    : $INNER_SIZE bytes"
 info "Inner zip created successfully"
 
-# ── Outer zip ────────────────────────────────────────────────────────────────
+# Outer zip
+
 OUTER_ZIP="$OUTPUT_DIR/outer.zip"
 
 info "Creating outer zip (password-protected, wrapping inner zip)..."
@@ -228,14 +237,16 @@ OUTER_SIZE=$(stat -f'%z' "$OUTER_ZIP" 2>/dev/null || stat --printf='%s' "$OUTER_
 debug "Outer zip size    : $OUTER_SIZE bytes"
 info "Outer zip created successfully"
 
-# ── Write password files ─────────────────────────────────────────────────────
+# Write password files
+
 info "Writing password files..."
 echo "$INNER_PASS" > "$OUTPUT_DIR/inner.txt"
 debug "Wrote inner password to: $OUTPUT_DIR/inner.txt"
 echo "$OUTER_PASS" > "$OUTPUT_DIR/outer.txt"
 debug "Wrote outer password to: $OUTPUT_DIR/outer.txt"
 
-# ── Summary ──────────────────────────────────────────────────────────────────
+# Summary
+
 info "========================================"
 info "DONE — Summary"
 info "========================================"
