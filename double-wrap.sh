@@ -25,9 +25,9 @@ log() {
     [[ -n "$LOG_FILE" ]] && echo "$msg" >> "$LOG_FILE"
 }
 
-debug() { log "DEBUG" "$@"; }
-info()  { log "INFO " "$@"; }
-error() { log "ERROR" "$@"; }
+debug() { log "debug" "$@"; }
+info()  { log "info" "$@"; }
+error() { log "error" "$@"; }
 
 # Password generation 
 # Generates a memorable passphrase-style password (14-20 chars) that includes
@@ -80,6 +80,23 @@ generate_password() {
         tray tree trim tune vale veil vine void wade wake wand
         ward wave weld west wick wild wind wine wing wish wolf
         wood wren yarn yoke zeal zinc zone
+        mountain river crystal beneath hollow wander
+        frozen silk meadow thunder orchid brave
+        chimney puzzle drifting velvet harbor stone
+        galaxy whisper cactus nominal lumber frail
+        spectrum candle rooftop blizzard falcon dawn
+        maple journey oxygen carpet shrine noble
+        lantern cobalt shadow prism delta quirky
+        anchor feather mosaic tunnel bronze ember
+        violin glacier pebble scarlet zenith coral
+        horizon plume wicker fossil nimble spark
+        riddle typhoon amber gazelle plaster ivory
+        clover beacon marbled furnace tundra sable
+        oyster pillar dusk raven flicker opal
+        compass vintage crescent molten drizzle sage
+        willow breeze parcel summit quartz igloo
+        penguin trophy nectar bonfire gadget twist
+        ripple vertex plume thicket azure fossil
     )
     local symbols=('!' '@' '#' '$' '%' '&' '*' '?' '+' '=')
 
@@ -141,7 +158,7 @@ LOG_FILE="$OUTPUT_DIR/log.txt"
 : > "$LOG_FILE"   # truncate / create
 
 info "========================================"
-info "double-wrap.sh starting"
+info "double-wrap is starting"
 info "========================================"
 debug "Target directory : $TARGET_DIR"
 debug "Output directory : $OUTPUT_DIR"
