@@ -227,8 +227,8 @@ foreach ($line in $structureLines) {
 Write-Debug2 "--- END STRUCTURE ---"
 
 # File count & total size
-$files = Get-ChildItem -LiteralPath $TargetDir -Recurse -File -Force
-$dirs  = Get-ChildItem -LiteralPath $TargetDir -Recurse -Directory -Force
+$files = @(Get-ChildItem -LiteralPath $TargetDir -Recurse -File -Force)
+$dirs  = @(Get-ChildItem -LiteralPath $TargetDir -Recurse -Directory -Force)
 $FileCount = $files.Count
 $DirCount  = $dirs.Count + 1  # include the target dir itself, matching `find -type d`
 $TotalSize = ($files | Measure-Object -Property Length -Sum).Sum
