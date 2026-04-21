@@ -2,7 +2,9 @@
 #
 # double-wrap.sh — Create a double-password-protected zip (zip-in-zip).
 #
-# Usage: ./double-wrap.sh <target-directory> [output-directory]
+# Usage: ./double-wrap.sh <target-path> [output-directory]
+#
+# <target-path> may be either a directory or a single file.
 #
 # Outputs (in output-directory, defaults to cwd):
 #   outer.zip   — the final double-wrapped archive
@@ -146,11 +148,28 @@ generate_password() {
 # Validation 
 
 if [[ $# -lt 1 ]]; then
-    echo "Usage: $0 <target-directory> [output-directory]" >&2
+    echo "Usage: $0 <target-path> [output-directory]" >&2
     exit 1
 fi
 
-TARGET_DIR="$(cd "$1" && pwd)"
+if [[ ! -e "$1" ]]; then
+    echo "Target does not exist: $1" >&2
+    exit 1
+fi
+
+TARGET_PARENT="$(cd "$(dirname "$1")" && pwd)"
+TARGET_NAME="$(basename "$1")"
+TARGET="$TARGET_PARENT/$TARGET_NAME"
+
+if [[ -d "$TARGET" ]]; then
+    TARGET_KIND="dir"
+elif [[ -f "$TARGET" ]]; then
+    TARGET_KIND="file"
+else
+    echo "Target must be a regular file or directory: $TARGET" >&2
+    exit 1
+fi
+
 OUTPUT_DIR="${2:-.}"
 OUTPUT_DIR="$(mkdir -p "$OUTPUT_DIR" && cd "$OUTPUT_DIR" && pwd)"
 
@@ -160,19 +179,14 @@ LOG_FILE="$OUTPUT_DIR/log.txt"
 info "========================================"
 info "double-wrap is starting"
 info "========================================"
-debug "Target directory : $TARGET_DIR"
+debug "Target path      : $TARGET"
+debug "Target kind      : $TARGET_KIND"
 debug "Output directory : $OUTPUT_DIR"
 debug "Script PID       : $$"
 debug "Shell            : $BASH_VERSION"
 debug "Date             : $(date)"
 debug "Hostname         : $(hostname)"
 debug "User             : $(whoami)"
-
-# Check target exists
-if [[ ! -d "$TARGET_DIR" ]]; then
-    error "Target directory does not exist: $TARGET_DIR"
-    exit 1
-fi
 
 # Check zip is available
 if ! command -v zip &>/dev/null; then
@@ -181,27 +195,34 @@ if ! command -v zip &>/dev/null; then
 fi
 
 # File/folder structure listing
-info "Recording file/folder structure of target directory..."
-debug "--- BEGIN STRUCTURE ---"
-# Use find for the structure listing (written to log only via the log function)
-while IFS= read -r line; do
-    debug "  $line"
-done < <(find "$TARGET_DIR" -not -path '*/\.*' | sort)
-debug "--- END STRUCTURE ---"
+if [[ "$TARGET_KIND" == "dir" ]]; then
+    info "Recording file/folder structure of target directory..."
+    debug "--- BEGIN STRUCTURE ---"
+    while IFS= read -r line; do
+        debug "  $line"
+    done < <(find "$TARGET" -not -path '*/\.*' | sort)
+    debug "--- END STRUCTURE ---"
 
-# File count & total size
-FILE_COUNT=$(find "$TARGET_DIR" -type f | wc -l | tr -d ' ')
-DIR_COUNT=$(find "$TARGET_DIR" -type d | wc -l | tr -d ' ')
-if stat --version &>/dev/null 2>&1; then
-    # GNU stat
-    TOTAL_SIZE=$(find "$TARGET_DIR" -type f -exec stat --printf='%s\n' {} + 2>/dev/null | awk '{s+=$1} END {print s+0}')
+    FILE_COUNT=$(find "$TARGET" -type f | wc -l | tr -d ' ')
+    DIR_COUNT=$(find "$TARGET" -type d | wc -l | tr -d ' ')
+    if stat --version &>/dev/null 2>&1; then
+        TOTAL_SIZE=$(find "$TARGET" -type f -exec stat --printf='%s\n' {} + 2>/dev/null | awk '{s+=$1} END {print s+0}')
+    else
+        TOTAL_SIZE=$(find "$TARGET" -type f -exec stat -f'%z' {} + 2>/dev/null | awk '{s+=$1} END {print s+0}')
+    fi
+    debug "Total files       : $FILE_COUNT"
+    debug "Total directories : $DIR_COUNT"
+    debug "Total size (bytes): $TOTAL_SIZE"
 else
-    # BSD stat (macOS)
-    TOTAL_SIZE=$(find "$TARGET_DIR" -type f -exec stat -f'%z' {} + 2>/dev/null | awk '{s+=$1} END {print s+0}')
+    info "Recording target file metadata..."
+    if stat --version &>/dev/null 2>&1; then
+        TOTAL_SIZE=$(stat --printf='%s' "$TARGET")
+    else
+        TOTAL_SIZE=$(stat -f'%z' "$TARGET")
+    fi
+    debug "Target file       : $TARGET_NAME"
+    debug "Total size (bytes): $TOTAL_SIZE"
 fi
-debug "Total files       : $FILE_COUNT"
-debug "Total directories : $DIR_COUNT"
-debug "Total size (bytes): $TOTAL_SIZE"
 
 # Generate passwords 
 
@@ -225,15 +246,20 @@ trap cleanup EXIT
 # Inner zip
 
 INNER_ZIP="$WORK_DIR/inner.zip"
-DIRNAME="$(basename "$TARGET_DIR")"
 
 info "Creating inner zip (password-protected)..."
 debug "Inner zip path    : $INNER_ZIP"
-debug "Archiving directory basename: $DIRNAME"
+debug "Archiving $TARGET_KIND: $TARGET_NAME"
 
-(cd "$(dirname "$TARGET_DIR")" && zip -r -P "$INNER_PASS" "$INNER_ZIP" "$DIRNAME") 2>&1 | while IFS= read -r line; do
-    debug "[zip-inner] $line"
-done
+if [[ "$TARGET_KIND" == "dir" ]]; then
+    (cd "$TARGET_PARENT" && zip -r -P "$INNER_PASS" "$INNER_ZIP" "$TARGET_NAME") 2>&1 | while IFS= read -r line; do
+        debug "[zip-inner] $line"
+    done
+else
+    (cd "$TARGET_PARENT" && zip -P "$INNER_PASS" "$INNER_ZIP" "$TARGET_NAME") 2>&1 | while IFS= read -r line; do
+        debug "[zip-inner] $line"
+    done
+fi
 
 INNER_SIZE=$(stat -f'%z' "$INNER_ZIP" 2>/dev/null || stat --printf='%s' "$INNER_ZIP" 2>/dev/null)
 debug "Inner zip size    : $INNER_SIZE bytes"
