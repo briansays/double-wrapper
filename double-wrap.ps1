@@ -1,7 +1,9 @@
 <#
     double-wrap.ps1 — Create a double-password-protected zip (zip-in-zip).
 
-    Usage: .\double-wrap.ps1 <target-directory> [output-directory]
+    Usage: .\double-wrap.ps1 <target-path> [output-directory]
+
+    <target-path> may be either a directory or a single file.
 
     Outputs (in output-directory, defaults to cwd):
       outer.zip   — the final double-wrapped archive
@@ -16,7 +18,8 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true, Position = 0)]
-    [string]$TargetDirectory,
+    [Alias('TargetDirectory')]
+    [string]$TargetPath,
 
     [Parameter(Mandatory = $false, Position = 1)]
     [string]$OutputDirectory = "."
@@ -175,11 +178,23 @@ function Resolve-SevenZip {
 # Validation
 
 try {
-    $TargetDir = (Resolve-Path -LiteralPath $TargetDirectory -ErrorAction Stop).Path
+    $Target = (Resolve-Path -LiteralPath $TargetPath -ErrorAction Stop).Path
 } catch {
-    [Console]::Error.WriteLine("Target directory does not exist: $TargetDirectory")
+    [Console]::Error.WriteLine("Target does not exist: $TargetPath")
     exit 1
 }
+
+if (Test-Path -LiteralPath $Target -PathType Container) {
+    $TargetKind = 'dir'
+} elseif (Test-Path -LiteralPath $Target -PathType Leaf) {
+    $TargetKind = 'file'
+} else {
+    [Console]::Error.WriteLine("Target must be a regular file or directory: $Target")
+    exit 1
+}
+
+$TargetName   = Split-Path -Path $Target -Leaf
+$TargetParent = Split-Path -Path $Target -Parent
 
 if (-not (Test-Path -LiteralPath $OutputDirectory)) {
     New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
@@ -192,19 +207,14 @@ Set-Content -LiteralPath $script:LogFile -Value '' -NoNewline   # truncate / cre
 Write-Info  "========================================"
 Write-Info  "double-wrap is starting"
 Write-Info  "========================================"
-Write-Debug2 "Target directory : $TargetDir"
+Write-Debug2 "Target path      : $Target"
+Write-Debug2 "Target kind      : $TargetKind"
 Write-Debug2 "Output directory : $OutputDir"
 Write-Debug2 "Script PID       : $PID"
 Write-Debug2 "Shell            : PowerShell $($PSVersionTable.PSVersion)"
 Write-Debug2 "Date             : $(Get-Date)"
 Write-Debug2 "Hostname         : $([System.Net.Dns]::GetHostName())"
 Write-Debug2 "User             : $env:USERNAME"
-
-# Check target exists (and is a directory)
-if (-not (Test-Path -LiteralPath $TargetDir -PathType Container)) {
-    Write-Err "Target directory does not exist: $TargetDir"
-    exit 1
-}
 
 # Check 7-Zip is available
 $SevenZip = Resolve-SevenZip
@@ -215,27 +225,33 @@ if (-not $SevenZip) {
 Write-Debug2 "7-Zip binary     : $SevenZip"
 
 # File/folder structure listing
-Write-Info "Recording file/folder structure of target directory..."
-Write-Debug2 "--- BEGIN STRUCTURE ---"
-# Skip dotfiles/dot-directories to match `find ... -not -path '*/\.*'`
-$allEntries = Get-ChildItem -LiteralPath $TargetDir -Recurse -Force |
-    Where-Object { ($_.FullName.Substring($TargetDir.Length) -split '[\\/]') -notmatch '^\.' }
-$structureLines = @($TargetDir) + ($allEntries | ForEach-Object { $_.FullName }) | Sort-Object
-foreach ($line in $structureLines) {
-    Write-Debug2 "  $line"
-}
-Write-Debug2 "--- END STRUCTURE ---"
+if ($TargetKind -eq 'dir') {
+    Write-Info "Recording file/folder structure of target directory..."
+    Write-Debug2 "--- BEGIN STRUCTURE ---"
+    # Skip dotfiles/dot-directories to match `find ... -not -path '*/\.*'`
+    $allEntries = Get-ChildItem -LiteralPath $Target -Recurse -Force |
+        Where-Object { ($_.FullName.Substring($Target.Length) -split '[\\/]') -notmatch '^\.' }
+    $structureLines = @($Target) + ($allEntries | ForEach-Object { $_.FullName }) | Sort-Object
+    foreach ($line in $structureLines) {
+        Write-Debug2 "  $line"
+    }
+    Write-Debug2 "--- END STRUCTURE ---"
 
-# File count & total size
-$files = @(Get-ChildItem -LiteralPath $TargetDir -Recurse -File -Force)
-$dirs  = @(Get-ChildItem -LiteralPath $TargetDir -Recurse -Directory -Force)
-$FileCount = $files.Count
-$DirCount  = $dirs.Count + 1  # include the target dir itself, matching `find -type d`
-$TotalSize = ($files | Measure-Object -Property Length -Sum).Sum
-if (-not $TotalSize) { $TotalSize = 0 }
-Write-Debug2 "Total files       : $FileCount"
-Write-Debug2 "Total directories : $DirCount"
-Write-Debug2 "Total size (bytes): $TotalSize"
+    $files = @(Get-ChildItem -LiteralPath $Target -Recurse -File -Force)
+    $dirs  = @(Get-ChildItem -LiteralPath $Target -Recurse -Directory -Force)
+    $FileCount = $files.Count
+    $DirCount  = $dirs.Count + 1  # include the target dir itself, matching `find -type d`
+    $TotalSize = ($files | Measure-Object -Property Length -Sum).Sum
+    if (-not $TotalSize) { $TotalSize = 0 }
+    Write-Debug2 "Total files       : $FileCount"
+    Write-Debug2 "Total directories : $DirCount"
+    Write-Debug2 "Total size (bytes): $TotalSize"
+} else {
+    Write-Info "Recording target file metadata..."
+    $TotalSize = (Get-Item -LiteralPath $Target).Length
+    Write-Debug2 "Target file       : $TargetName"
+    Write-Debug2 "Total size (bytes): $TotalSize"
+}
 
 # Generate passwords
 
@@ -263,16 +279,18 @@ try {
     # Inner zip
 
     $InnerZip = Join-Path $WorkDir 'inner.zip'
-    $DirName  = Split-Path -Path $TargetDir -Leaf
-    $ParentDir = Split-Path -Path $TargetDir -Parent
 
     Write-Info "Creating inner zip (password-protected)..."
     Write-Debug2 "Inner zip path    : $InnerZip"
-    Write-Debug2 "Archiving directory basename: $DirName"
+    Write-Debug2 "Archiving ${TargetKind}: $TargetName"
 
-    Push-Location -LiteralPath $ParentDir
+    Push-Location -LiteralPath $TargetParent
     try {
-        $innerArgs = @('a', '-tzip', "-p$InnerPass", '-r', $InnerZip, $DirName)
+        if ($TargetKind -eq 'dir') {
+            $innerArgs = @('a', '-tzip', "-p$InnerPass", '-r', $InnerZip, $TargetName)
+        } else {
+            $innerArgs = @('a', '-tzip', "-p$InnerPass", $InnerZip, $TargetName)
+        }
         $innerOutput = & $SevenZip @innerArgs 2>&1
         $innerExit = $LASTEXITCODE
         foreach ($line in $innerOutput) {
