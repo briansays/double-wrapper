@@ -50,13 +50,38 @@ function Write-Info   { param([string]$m) Write-Log -Level 'info'  -Message $m }
 function Write-Err    { param([string]$m) Write-Log -Level 'error' -Message $m }
 
 # Password generation
-# Generates a memorable passphrase-style password (14-20 chars) that includes
-# lowercase, uppercase, digits, and symbols.
+# Generates a memorable passphrase-style password that satisfies these rules:
+#   - at least 14 characters (max 24 to stay memorable)
+#   - at least 2 digits
+#   - at least 2 special characters
+#   - at least 1 uppercase and 1 lowercase letter
 #
-# Strategy: pick 2-3 short dictionary words, capitalize one, insert a digit
-# group and a symbol to glue them together.  Result looks like:
-#   oak7#Breeze!cup   (17 chars)
-#   Mint3&river$fox   (15 chars)
+# Strategy: pick 3 dictionary words, capitalize one, then splice in 2 digits
+# and 2 symbols at varied positions.  Result looks like:
+#   oak7#Breeze!cup4   (16 chars)
+#   Mint&river38$fox   (16 chars)
+
+# Cryptographically secure random integer in [0, n).
+# Uses the OS CSPRNG via RandomNumberGenerator with rejection sampling to
+# avoid modulo bias.  Works on both Windows PowerShell 5.1 and PowerShell 7.
+$script:Rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+
+function Get-SecureRandom {
+    param([Parameter(Mandatory = $true)][int]$Max)
+    $range = [uint64]4294967296                 # 2^32
+    $limit = $range - ($range % [uint64]$Max)
+    $bytes = New-Object byte[] 4
+    while ($true) {
+        $script:Rng.GetBytes($bytes)
+        $r = [uint64][BitConverter]::ToUInt32($bytes, 0)
+        if ($r -lt $limit) { return [int]($r % [uint64]$Max) }
+    }
+}
+
+function Get-SecureItem {
+    param([Parameter(Mandatory = $true)][object[]]$Items)
+    return $Items[(Get-SecureRandom -Max $Items.Count)]
+}
 
 function New-Password {
     # Small curated word list — short, common, easy to remember
@@ -116,46 +141,66 @@ function New-Password {
         'compass','vintage','crescent','molten','drizzle','sage',
         'willow','breeze','parcel','summit','quartz','igloo',
         'penguin','trophy','nectar','bonfire','gadget','twist',
-        'ripple','vertex','plume','thicket','azure','fossil'
+        'ripple','vertex','plume','thicket','azure','fossil',
+        'acorn','badger','bamboo','banjo','barley','basin','bison','blossom','boulder','bramble',
+        'buckle','burrow','cabin','canyon','caramel','cedar','cello','cherry','cinder','citrus',
+        'comet','copper','cotton','cricket','cypress','dahlia','dolphin','domino','dragon','fennel',
+        'fiddle','firefly','fjord','flannel','flint','garnet','ginger','granite','gravel','griffin',
+        'hammock','hazel','heron','hickory','honey','indigo','iris','jasmine','jigsaw','juniper',
+        'kayak','kernel','kettle','koala','ladder','lagoon','lemon','lily','linen','locket',
+        'magnet','mango','marble','marlin','meteor','monsoon','muffin','mustang','nutmeg','octave',
+        'olive','orbit','otter','paddle','panther','papaya','parrot','pepper','pigeon','pilot',
+        'planet','pocket','poppy','pretzel','pumpkin','quill','quiver','rabbit','radish','rapids',
+        'rocket','saddle','saffron','salmon','satchel','sequoia','sierra','sparrow','spruce','squirrel'
     )
-    $symbols = @('!','@','#','$','%','&','*','?','+','=')
+    $symbols = @('!','@','#','$','%','&','*','?','+','=','^','~','-','_')
+
+    $minLen = 14
+    $maxLen = 24
 
     while ($true) {
         # Pick 3 random words
-        $w1 = Get-Random -InputObject $words
-        $w2 = Get-Random -InputObject $words
-        $w3 = Get-Random -InputObject $words
+        $w1 = Get-SecureItem -Items $words
+        $w2 = Get-SecureItem -Items $words
+        $w3 = Get-SecureItem -Items $words
 
         # Capitalize one word at random
-        $pick = Get-Random -Minimum 0 -Maximum 3
+        $pick = Get-SecureRandom -Max 3
         switch ($pick) {
             0 { $w1 = $w1.Substring(0,1).ToUpper() + $w1.Substring(1) }
             1 { $w2 = $w2.Substring(0,1).ToUpper() + $w2.Substring(1) }
             2 { $w3 = $w3.Substring(0,1).ToUpper() + $w3.Substring(1) }
         }
 
-        # Random digit(s) and symbol
-        $digit = Get-Random -Minimum 0 -Maximum 100
-        $sym   = Get-Random -InputObject $symbols
-        $sym2  = Get-Random -InputObject $symbols
+        # Two separate digits and two symbols
+        $d1 = Get-SecureRandom -Max 10
+        $d2 = Get-SecureRandom -Max 10
+        $s1 = Get-SecureItem -Items $symbols
+        $s2 = Get-SecureItem -Items $symbols
 
-        # Assemble — vary the pattern
-        $pattern = Get-Random -Minimum 0 -Maximum 4
+        # Assemble — vary where digits and symbols land
+        $pattern = Get-SecureRandom -Max 6
         switch ($pattern) {
-            0 { $pw = "$w1$digit$sym$w2$sym2$w3" }
-            1 { $pw = "$w1$sym$w2$digit$sym2$w3" }
-            2 { $pw = "$w1$sym$digit$w2$sym2$w3" }
-            3 { $pw = "$w1$sym$w2$sym2$w3$digit" }
+            0 { $pw = "$w1$d1$s1$w2$s2$w3$d2" }
+            1 { $pw = "$w1$s1$w2$d1$d2$s2$w3" }
+            2 { $pw = "$d1$w1$s1$w2$s2$d2$w3" }
+            3 { $pw = "$w1$s1$d1$w2$d2$s2$w3" }
+            4 { $pw = "$w1$d1$w2$s1$s2$w3$d2" }
+            5 { $pw = "$s1$w1$d1$d2$w2$w3$s2" }
         }
 
+        # Enforce the rules explicitly
         $len = $pw.Length
-        if ($len -ge 14 -and $len -le 20) {
-            # Verify complexity: has lower, upper, digit, symbol
-            if ($pw -cmatch '[a-z]' -and $pw -cmatch '[A-Z]' -and `
-                $pw -match '[0-9]' -and $pw -match '[!@#\$%&\*\?\+=]') {
-                return $pw
-            }
-        }
+        if ($len -lt $minLen -or $len -gt $maxLen) { continue }
+
+        $digitCount   = ($pw -replace '[^0-9]', '').Length
+        $specialCount = ($pw -replace '[A-Za-z0-9]', '').Length
+        if ($digitCount -lt 2)        { continue }
+        if ($specialCount -lt 2)      { continue }
+        if ($pw -cnotmatch '[a-z]')   { continue }
+        if ($pw -cnotmatch '[A-Z]')   { continue }
+
+        return $pw
     }
 }
 

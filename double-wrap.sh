@@ -32,13 +32,32 @@ info()  { log "info" "$@"; }
 error() { log "error" "$@"; }
 
 # Password generation 
-# Generates a memorable passphrase-style password (14-20 chars) that includes
-# lowercase, uppercase, digits, and symbols.
+# Generates a memorable passphrase-style password that satisfies these rules:
+#   - at least 14 characters (max 24 to stay memorable)
+#   - at least 2 digits
+#   - at least 2 special characters
+#   - at least 1 uppercase and 1 lowercase letter
 #
-# Strategy: pick 2-3 short dictionary words, capitalize one, insert a digit
-# group and a symbol to glue them together.  Result looks like:
-#   oak7#Breeze!cup   (17 chars)
-#   Mint3&river$fox   (15 chars)
+# Strategy: pick 3 dictionary words, capitalize one, then splice in 2 digits
+# and 2 symbols at varied positions.  Result looks like:
+#   oak7#Breeze!cup4   (16 chars)
+#   Mint&river38$fox   (16 chars)
+
+# Cryptographically secure random integer in [0, n).
+# Reads 4 bytes from /dev/urandom and uses rejection sampling to avoid
+# modulo bias.
+secure_rand() {
+    local n="$1" r
+    local range=4294967296                      # 2^32
+    local limit=$(( range - (range % n) ))
+    while true; do
+        r=$(od -An -N4 -tu4 /dev/urandom | tr -d ' ')
+        if (( r < limit )); then
+            echo $(( r % n ))
+            return
+        fi
+    done
+}
 
 generate_password() {
     # Small curated word list — short, common, easy to remember
@@ -99,49 +118,68 @@ generate_password() {
         willow breeze parcel summit quartz igloo
         penguin trophy nectar bonfire gadget twist
         ripple vertex plume thicket azure fossil
+        acorn badger bamboo banjo barley basin bison blossom boulder bramble
+        buckle burrow cabin canyon caramel cedar cello cherry cinder citrus
+        comet copper cotton cricket cypress dahlia dolphin domino dragon fennel
+        fiddle firefly fjord flannel flint garnet ginger granite gravel griffin
+        hammock hazel heron hickory honey indigo iris jasmine jigsaw juniper
+        kayak kernel kettle koala ladder lagoon lemon lily linen locket
+        magnet mango marble marlin meteor monsoon muffin mustang nutmeg octave
+        olive orbit otter paddle panther papaya parrot pepper pigeon pilot
+        planet pocket poppy pretzel pumpkin quill quiver rabbit radish rapids
+        rocket saddle saffron salmon satchel sequoia sierra sparrow spruce squirrel
     )
-    local symbols=('!' '@' '#' '$' '%' '&' '*' '?' '+' '=')
+    local symbols=('!' '@' '#' '$' '%' '&' '*' '?' '+' '=' '^' '~' '-' '_')
 
     local count=${#words[@]}
+    local nsym=${#symbols[@]}
+    local min_len=14 max_len=24
     local pw=""
 
     while true; do
         # Pick 3 random words
-        local w1="${words[$((RANDOM % count))]}"
-        local w2="${words[$((RANDOM % count))]}"
-        local w3="${words[$((RANDOM % count))]}"
+        local w1="${words[$(secure_rand "$count")]}"
+        local w2="${words[$(secure_rand "$count")]}"
+        local w3="${words[$(secure_rand "$count")]}"
 
         # Capitalize one word at random
-        local pick=$((RANDOM % 3))
+        local pick=$(secure_rand 3)
         case $pick in
             0) w1="$(echo "${w1:0:1}" | tr '[:lower:]' '[:upper:]')${w1:1}" ;;
             1) w2="$(echo "${w2:0:1}" | tr '[:lower:]' '[:upper:]')${w2:1}" ;;
             2) w3="$(echo "${w3:0:1}" | tr '[:lower:]' '[:upper:]')${w3:1}" ;;
         esac
 
-        # Random digit(s) and symbol
-        local digit=$((RANDOM % 100))
-        local sym="${symbols[$((RANDOM % ${#symbols[@]}))]}"
-        local sym2="${symbols[$((RANDOM % ${#symbols[@]}))]}"
+        # Two separate digits and two symbols
+        local d1=$(secure_rand 10)
+        local d2=$(secure_rand 10)
+        local s1="${symbols[$(secure_rand "$nsym")]}"
+        local s2="${symbols[$(secure_rand "$nsym")]}"
 
-        # Assemble — vary the pattern
-        local pattern=$((RANDOM % 4))
+        # Assemble — vary where digits and symbols land
+        local pattern=$(secure_rand 6)
         case $pattern in
-            0) pw="${w1}${digit}${sym}${w2}${sym2}${w3}" ;;
-            1) pw="${w1}${sym}${w2}${digit}${sym2}${w3}" ;;
-            2) pw="${w1}${sym}${digit}${w2}${sym2}${w3}" ;;
-            3) pw="${w1}${sym}${w2}${sym2}${w3}${digit}" ;;
+            0) pw="${w1}${d1}${s1}${w2}${s2}${w3}${d2}" ;;
+            1) pw="${w1}${s1}${w2}${d1}${d2}${s2}${w3}" ;;
+            2) pw="${d1}${w1}${s1}${w2}${s2}${d2}${w3}" ;;
+            3) pw="${w1}${s1}${d1}${w2}${d2}${s2}${w3}" ;;
+            4) pw="${w1}${d1}${w2}${s1}${s2}${w3}${d2}" ;;
+            5) pw="${s1}${w1}${d1}${d2}${w2}${w3}${s2}" ;;
         esac
 
+        # Enforce the rules explicitly
         local len=${#pw}
-        if (( len >= 14 && len <= 20 )); then
-            # Verify complexity: has lower, upper, digit, symbol
-            if [[ "$pw" =~ [a-z] ]] && [[ "$pw" =~ [A-Z] ]] && \
-               [[ "$pw" =~ [0-9] ]] && [[ "$pw" =~ [\!\@\#\$\%\&\*\?\+\=] ]]; then
-                echo "$pw"
-                return
-            fi
-        fi
+        (( len >= min_len && len <= max_len )) || continue
+
+        local digits="${pw//[^0-9]/}"
+        local specials="${pw//[A-Za-z0-9]/}"
+        (( ${#digits} >= 2 ))   || continue
+        (( ${#specials} >= 2 )) || continue
+        [[ "$pw" =~ [a-z] ]]    || continue
+        [[ "$pw" =~ [A-Z] ]]    || continue
+
+        echo "$pw"
+        return
     done
 }
 
